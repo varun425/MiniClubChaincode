@@ -5,7 +5,7 @@ import (
 
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 
-	"github.com/noobdreamers/MiniClubChaincode/healthclub"
+	"github.com/varun425/MiniClubChaincode/healthclub"
 )
 
 func main() {
