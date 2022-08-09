@@ -1,21 +1,23 @@
-package healthClub
+package healthclub
 
 import (
 	"encoding/json"
 	"fmt"
 	"log"
 
+	erc20 "github.com/varun425/MiniClubChaincode/erc20"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
 type HealthClub struct {
 	contractapi.Contract
+	erc20.SmartContract
 }
 
 type User struct {
 	Memberships []string `json:"memberships"`
 	Name        string   `json:"name"`
-	Email       string   `json:"email`
+	Email       string   `json:"email"`
 }
 
 type Level struct {
@@ -25,24 +27,24 @@ type Level struct {
 
 const userPrefix = "User-"
 
-func (h *HealthClub) RegisterUser(ctx contractapi.TransactionContextInterface, name string, email string) (error, string) {
+func (h *HealthClub) RegisterUser(ctx contractapi.TransactionContextInterface, name string, email string) (string, error) {
 
-	userid, err := ctx.GetStub().GetID()
+	userid, err := ctx.GetClientIdentity().GetID()
 
 	if err != nil {
-		return fmt.Errorf("failed to get userID: %v", err), ""
+		return "", fmt.Errorf("failed to get userID: %v", err)
 	}
 
 	// check user is already registered or not
 	newUserId := userPrefix + userid
 
-	user, err := ctx.GetStub.GetState(newUserId)
+	user, err := ctx.GetStub().GetState(newUserId)
 	if err != nil {
-		return fmt.Errorf("%v", err), ""
+		return "", fmt.Errorf("%v", err)
 	}
 
 	if user != nil {
-		return nil, "User already registered"
+		return "User already registered", nil
 	}
 
 	// create new user
@@ -56,23 +58,29 @@ func (h *HealthClub) RegisterUser(ctx contractapi.TransactionContextInterface, n
 	err = ctx.GetStub().PutState(newUserId, userdetailsbytes)
 
 	if err != nil {
-		return fmt.Errorf("error:%v", err), ""
+		return "", fmt.Errorf("error:%v", err)
 	}
 
 	log.Printf("%v user saved successfully", newUserId)
-	return nil, "User saved successfully"
+
+	err = h.Mint(ctx, 100)
 
 	// send bonus token to user account
+	if err != nil {
+		return "", fmt.Errorf("error:%v", err)
+	}
+
+	return "User saved successfully", nil
 }
 
 func (h *HealthClub) SetMembershipLevelToken(ctx contractapi.TransactionContextInterface, level string, months uint, entryPrizeTokens uint) error {
 
-	res, roleBool, err := ctx.GetClientIdentity.GetAttributeValue("role")
+	res, roleBool, err := ctx.GetClientIdentity().GetAttributeValue("role")
 	if err != nil {
 		return fmt.Errorf("error:%v", err)
 	}
 
-	if roleBool == false {
+	if !roleBool {
 		return fmt.Errorf("attribute-value is not set")
 	}
 
@@ -92,7 +100,7 @@ func (h *HealthClub) SetMembershipLevelToken(ctx contractapi.TransactionContextI
 			return fmt.Errorf("error:%v", err)
 		}
 
-		_, err = ctx.GetStub().PutState(level, resInBytes)
+		err = ctx.GetStub().PutState(level, resInBytes)
 		if err != nil {
 			return fmt.Errorf("error:%v", err)
 		}
@@ -100,7 +108,7 @@ func (h *HealthClub) SetMembershipLevelToken(ctx contractapi.TransactionContextI
 		log.Printf("The %v level is set at %v tokens for %v months ", level, entryPrizeTokens, months)
 
 	} else {
-		return fmt.Errorf("only gold, diamond, and platinum levels are acceptable.")
+		return fmt.Errorf("only gold, diamond, and platinum levels are acceptable")
 	}
 
 	return nil
