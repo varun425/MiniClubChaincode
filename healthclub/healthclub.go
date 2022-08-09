@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	erc20 "github.com/varun425/MiniClubChaincode/erc20"
+	erc20 "github.com/VisheshSolu/MiniClubChaincode/erc20"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
@@ -17,7 +17,7 @@ type HealthClub struct {
 type User struct {
 	Memberships []string `json:"memberships"`
 	Name        string   `json:"name"`
-	Email       string   `json:"email"`
+	Email       string   `json:"email`
 }
 
 type Level struct {
@@ -40,11 +40,11 @@ func (h *HealthClub) RegisterUser(ctx contractapi.TransactionContextInterface, n
 
 	user, err := ctx.GetStub().GetState(newUserId)
 	if err != nil {
-		return "", fmt.Errorf("%v", err)
+		return "", fmt.Errorf("error:%v", err)
 	}
 
 	if user != nil {
-		return "User already registered", nil
+		return "", fmt.Errorf("User %v already registered", newUserId)
 	}
 
 	// create new user
@@ -61,16 +61,14 @@ func (h *HealthClub) RegisterUser(ctx contractapi.TransactionContextInterface, n
 		return "", fmt.Errorf("error:%v", err)
 	}
 
-	log.Printf("%v user saved successfully", newUserId)
-
-	err = h.Mint(ctx, 100)
-
 	// send bonus token to user account
+	err = h.Mint(ctx, 100)
 	if err != nil {
 		return "", fmt.Errorf("error:%v", err)
 	}
 
-	return "User saved successfully", nil
+	log.Printf("%v registered successfully", newUserId)
+	return "User registered successfully", nil
 }
 
 func (h *HealthClub) SetMembershipLevelToken(ctx contractapi.TransactionContextInterface, level string, months uint, entryPrizeTokens uint) error {
