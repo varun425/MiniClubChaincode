@@ -46,14 +46,14 @@ func (s *SmartContract) Mint(ctx contractapi.TransactionContextInterface, amount
 		return fmt.Errorf("Contract options need to be set before calling any function, call Initialize() to initialize contract")
 	}
 
-	// Check minter authorization - this sample assumes Org1 is the central banker with privilege to mint new tokens
-	clientMSPID, err := ctx.GetClientIdentity().GetMSPID()
-	if err != nil {
-		return fmt.Errorf("failed to get MSPID: %v", err)
-	}
-	if clientMSPID != "Org1MSP" {
-		return fmt.Errorf("client is not authorized to mint new tokens")
-	}
+	// // Check minter authorization - this sample assumes Org1 is the central banker with privilege to mint new tokens
+	// clientMSPID, err := ctx.GetClientIdentity().GetMSPID()
+	// if err != nil {
+	// 	return fmt.Errorf("failed to get MSPID: %v", err)
+	// }
+	// if clientMSPID != "Org1MSP" {
+	// 	return fmt.Errorf("client is not authorized to mint new tokens")
+	// }
 
 	// Get ID of submitting client identity
 	minter, err := ctx.GetClientIdentity().GetID()
@@ -721,9 +721,9 @@ func sub(b int, q int) (int, error) {
 
 	// Check overflow
 	var diff int
-	diff = q - b
+	diff = b - q
 
-	if (diff > q) == (b >= 0 && q >= 0) {
+	if (diff > b) == (b >= 0 && q >= 0) {
 		return 0, fmt.Errorf("Math: Subtraction overflow occurred  %d - %d", b, q)
 	}
 
