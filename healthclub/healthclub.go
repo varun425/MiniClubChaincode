@@ -875,7 +875,7 @@ func (h *HealthClub) GetLevelDetails(ctx contractapi.TransactionContextInterface
 	return leveldetails, nil
 }
 
-func (h *HealthClub) update(ctx contractapi.TransactionContextInterface, level string, tokens int) (string, error) {
+func (h *HealthClub) Update(ctx contractapi.TransactionContextInterface, level string, tokens int) (string, error) {
 
 	// get unique user id
 	userId, err := ctx.GetClientIdentity().GetID()
@@ -908,9 +908,12 @@ func (h *HealthClub) update(ctx contractapi.TransactionContextInterface, level s
 	}
 	json.Unmarshal(resInBytes, membership)
 	currentTime := time.Now()
+	log.Printf("currentTime::::", currentTime)
 	endTime, _ := time.Parse("01-02-2006", membership.EndDate)
-	checkExpire := (endTime.Sub(currentTime).Hours())
-
+	log.Printf("membership.EndDate::::", membership.EndDate)
+	log.Printf("endTime::::", endTime)
+	checkExpire := (endTime.Sub(currentTime)).Hours()
+	log.Printf("checkExpire::::", checkExpire)
 	if int(checkExpire) <= 0 {
 		return "", fmt.Errorf("un-expected time difference: %v", checkExpire)
 	}
