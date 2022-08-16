@@ -1,114 +1,72 @@
-package healthclub
+func (h *HealthClub) update(ctx contractapi.TransactionContextInterface, level string, tokens int) (string, error) {
 
-import (
-	"encoding/json"
-	"fmt"
-	"log"
+	// get unique user id
+	userId, err := ctx.GetClientIdentity().GetID()
+	if err != nil {
+		return "", fmt.Errorf("error:%v", err.Error())
+	}
 
-	erc20 "github.com/VisheshSolu/MiniClubChaincode/erc20"
-	"github.com/hyperledger/fabric-contract-api-go/contractapi"
-)
+	userDetails := new(User)
+	resInBytes, err := ctx.GetStub().GetState("User-" + userId)
+	if err != nil {
+		return "", fmt.Errorf("error:%v", err.Error())
+	}
+	json.Unmarshal(resInBytes, userDetails)
 
-type HealthClub struct {
-	contractapi.Contract
-	erc20.SmartContract
-}
+	level_ := new(Level)
+	resInBytes, err = ctx.GetStub().GetState(level)
+	if err != nil {
+		return "", fmt.Errorf("error:%v", err.Error())
+	}
+	json.Unmarshal(resInBytes, level_)
 
-type User struct {
-	Memberships []string `json:"memberships"`
-	Name        string   `json:"name"`
-	Email       string   `json:"email`
-}
+	//nMT - oMT = n token
+	membership := new(Membership)
 
-type Level struct {
-	EntryPrizeTokens uint `json:"entryprizetokens"`
-	Months           uint `json:"months"`
-}
-
-const userPrefix = "User-"
-
-func (h *HealthClub) RegisterUser(ctx contractapi.TransactionContextInterface, name string, email string) (string, error) {
-
-	userid, err := ctx.GetClientIdentity().GetID()
+	a := len(userDetails.Memberships)
+	resInBytes, err = ctx.GetStub().GetState(membershipPrefix + strconv.Itoa(a-1))
 
 	if err != nil {
-		return "", fmt.Errorf("failed to get userID: %v", err)
+		return "", fmt.Errorf("error:%v", err.Error())
+	}
+	json.Unmarshal(resInBytes, membership)
+	currentTime := time.Now()
+	endTime, _ := time.Parse("01-02-2006", membership.EndDate)
+	checkExpire := (endTime.Sub(currentTime).Hours())
+
+	if int(checkExpire) <= 0 {
+		return "", fmt.Errorf("un-expected time difference: %v", checkExpire)
 	}
 
-	// check user is already registered or not
-	newUserId := userPrefix + userid
+	if checkExpire <= 24 {
+		return "", fmt.Errorf("membership expired at %v cannot update", checkExpire)
+	}
 
-	user, err := ctx.GetStub().GetState(newUserId)
+	months := (checkExpire / 730)
+	//6 > 5
+	if int(months) >= level_.Months {
+		return "", fmt.Errorf("cannot de-grade membership from %v to %v", level_.Months, int(months))
+	}
+
+	n := level_.EntryPrizeTokens - membership.TokenDeposited
+	if n != tokens {
+		return "", fmt.Errorf("required token = %v but given = %v", n, tokens)
+	}
+
+	newMonths := int(months) + (level_.Months - 1)
+	membership.StartDate = currentTime.Format("01-02-2006")
+	membership.EndDate = currentTime.AddDate(0, int(newMonths), 0).Format("01-02-2006")
+	membership.TokenDeposited = tokens + membership.TokenDeposited
+
+	resInBytes, _ = json.Marshal(membership)
+	//membershipID := membershipPrefix + strconv.Itoa(TotalMemberships+1)
+	err = ctx.GetStub().PutState(membershipPrefix+strconv.Itoa(a-1), resInBytes)
 	if err != nil {
-		return "", fmt.Errorf("error:%v", err)
+		return "", fmt.Errorf("error:%v", err.Error())
 	}
 
-	if user != nil {
-		return "", fmt.Errorf("User %v already registered", newUserId)
-	}
+	log.Printf("membership updated from %v to %v at %v tokens", membership.StartDate, membership.EndDate, membership.TokenDeposited)
 
-	// create new user
-	userdetails := User{
-		Memberships: []string{},
-		Name:        name,
-		Email:       email,
-	}
-
-	userdetailsbytes, _ := json.Marshal(userdetails)
-	err = ctx.GetStub().PutState(newUserId, userdetailsbytes)
-
-	if err != nil {
-		return "", fmt.Errorf("error:%v", err)
-	}
-
-	// send bonus token to user account
-	err = h.Mint(ctx, 100)
-	if err != nil {
-		return "", fmt.Errorf("error:%v", err)
-	}
-
-	log.Printf("%v registered successfully", newUserId)
-	return "User registered successfully", nil
-}
-
-func (h *HealthClub) SetMembershipLevelToken(ctx contractapi.TransactionContextInterface, level string, months uint, entryPrizeTokens uint) error {
-
-	res, roleBool, err := ctx.GetClientIdentity().GetAttributeValue("role")
-	if err != nil {
-		return fmt.Errorf("error:%v", err)
-	}
-
-	if !roleBool {
-		return fmt.Errorf("attribute-value is not set")
-	}
-
-	if res != "admin" {
-		return fmt.Errorf("current role is :%v ,but requires admin role", res)
-	}
-
-	if level == "gold" || level == "diamond" || level == "platinum" {
-
-		temp := Level{
-			EntryPrizeTokens: entryPrizeTokens,
-			Months:           months,
-		}
-
-		resInBytes, err := json.Marshal(temp)
-		if err != nil {
-			return fmt.Errorf("error:%v", err)
-		}
-
-		err = ctx.GetStub().PutState(level, resInBytes)
-		if err != nil {
-			return fmt.Errorf("error:%v", err)
-		}
-
-		log.Printf("The %v level is set at %v tokens for %v months ", level, entryPrizeTokens, months)
-
-	} else {
-		return fmt.Errorf("only gold, diamond, and platinum levels are acceptable")
-	}
-
-	return nil
+	return "", nil
 
 }
