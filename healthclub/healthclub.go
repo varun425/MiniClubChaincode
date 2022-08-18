@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
+	erc20 "github.com/VisheshSolu/MiniClubChaincode/erc20"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
-	erc20 "github.com/varun425/MiniClubChaincode/erc20"
 )
 
 type HealthClub struct {
@@ -742,7 +743,7 @@ func (h *HealthClub) CancelMembership(ctx contractapi.TransactionContextInterfac
 	}
 }
 
-func calculaterefundamount(ctx contractapi.TransactionContextInterface, amount int, level string, month string) (int, error) {
+func calculaterefundamount(amount int, level string, month string) (int, error) {
 
 	if level == platinumlevel {
 
@@ -875,7 +876,7 @@ func (h *HealthClub) GetLevelDetails(ctx contractapi.TransactionContextInterface
 	return leveldetails, nil
 }
 
-func (h *HealthClub) Update(ctx contractapi.TransactionContextInterface, level string, tokens int) (string, error) {
+func (h *HealthClub) UpgradeMembership(ctx contractapi.TransactionContextInterface, level string) (string, error) {
 
 	// get unique user id
 	userId, err := ctx.GetClientIdentity().GetID()
@@ -883,37 +884,60 @@ func (h *HealthClub) Update(ctx contractapi.TransactionContextInterface, level s
 		return "", fmt.Errorf("error:%v", err.Error())
 	}
 
+	if userId == "" {
+		return "", fmt.Errorf("userID not exist")
+	}
+
 	userDetails := new(User)
-	resInBytes, err := ctx.GetStub().GetState("User-" + userId)
+	resInBytes1, err := ctx.GetStub().GetState(userPrefix + userId)
 	if err != nil {
 		return "", fmt.Errorf("error:%v", err.Error())
 	}
-	json.Unmarshal(resInBytes, userDetails)
+
+	if resInBytes1 == nil {
+		return "", fmt.Errorf("empty userDetails")
+	}
+	_ = json.Unmarshal(resInBytes1, &userDetails)
 
 	level_ := new(Level)
-	resInBytes, err = ctx.GetStub().GetState(level)
+	resInBytes2, err := ctx.GetStub().GetState(level)
 	if err != nil {
 		return "", fmt.Errorf("error:%v", err.Error())
 	}
-	json.Unmarshal(resInBytes, level_)
+	if resInBytes1 == nil {
+		return "", fmt.Errorf("empty level")
+	}
+	_ = json.Unmarshal(resInBytes2, &level_)
 
-	//nMT - oMT = n token
 	membership := new(Membership)
 
 	a := len(userDetails.Memberships)
-	resInBytes, err = ctx.GetStub().GetState(membershipPrefix + strconv.Itoa(a-1))
+
+	currentMembershipID := userDetails.Memberships[a-1]
+
+	resInBytes3, err := ctx.GetStub().GetState(currentMembershipID)
 
 	if err != nil {
 		return "", fmt.Errorf("error:%v", err.Error())
 	}
-	json.Unmarshal(resInBytes, membership)
+	_ = json.Unmarshal(resInBytes3, &membership)
+
+	if err != nil {
+		return "", fmt.Errorf("error:::%v", err.Error())
+	}
+
+	oldLevelcopy := membership.Level
+
 	currentTime := time.Now()
-	log.Printf("currentTime::::", currentTime)
+
 	endTime, _ := time.Parse("01-02-2006", membership.EndDate)
-	log.Printf("membership.EndDate::::", membership.EndDate)
-	log.Printf("endTime::::", endTime)
+
 	checkExpire := (endTime.Sub(currentTime)).Hours()
-	log.Printf("checkExpire::::", checkExpire)
+
+	if level != goldlevel && level != diamondlevel && level != platinumlevel {
+		return "", fmt.Errorf("level not matched,expected Gold,Platinum,Diamond but given: %v", level)
+	}
+
 	if int(checkExpire) <= 0 {
 		return "", fmt.Errorf("un-expected time difference: %v", checkExpire)
 	}
@@ -923,30 +947,265 @@ func (h *HealthClub) Update(ctx contractapi.TransactionContextInterface, level s
 	}
 
 	months := (checkExpire / 730)
-	//6 > 5
+
 	if int(months) >= level_.Months {
-		return "", fmt.Errorf("cannot de-grade membership from %v to %v", level_.Months, int(months))
+		return "", fmt.Errorf("cannot de-grade membership from %v to %v", membership.Level, level)
 	}
 
-	n := level_.EntryPrizeTokens - membership.TokenDeposited
-	if n != tokens {
-		return "", fmt.Errorf("required token = %v but given = %v", n, tokens)
+	tokens := level_.EntryPrizeTokens - membership.TokenDeposited
+
+	if tokens <= 0 {
+		return "", fmt.Errorf("already on %v level", level)
 	}
 
 	newMonths := int(months) + (level_.Months - 1)
-	membership.StartDate = currentTime.Format("01-02-2006")
 	membership.EndDate = currentTime.AddDate(0, int(newMonths), 0).Format("01-02-2006")
 	membership.TokenDeposited = tokens + membership.TokenDeposited
+	membership.IsCompleted = false
+	membership.IsUpdated = true
+	membership.Level = level
 
-	resInBytes, _ = json.Marshal(membership)
-	//membershipID := membershipPrefix + strconv.Itoa(TotalMemberships+1)
-	err = ctx.GetStub().PutState(membershipPrefix+strconv.Itoa(a-1), resInBytes)
+	resInBytes, _ := json.Marshal(membership)
+
+	if err != nil {
+		return "", fmt.Errorf("err: %v", err)
+	}
+
+	err = ctx.GetStub().PutState(currentMembershipID, resInBytes)
 	if err != nil {
 		return "", fmt.Errorf("error:%v", err.Error())
 	}
 
+	userdetailsbytes, _ := json.Marshal(userDetails)
+	err = ctx.GetStub().PutState(userPrefix+userId, userdetailsbytes)
+	if err != nil {
+		return "", fmt.Errorf("error:%v", err)
+	}
+
+	checkForCompositeKey, err := h.GetParticularMemberByLevel(ctx, level, userId)
+
+	if err != nil {
+		return "", fmt.Errorf("error:%v", err.Error())
+	}
+	var index string = "level~UserID"
+	if !checkForCompositeKey {
+
+		userLevelIndexKey, err := ctx.GetStub().CreateCompositeKey(index, []string{level, userId})
+		if err != nil {
+			return "", fmt.Errorf("failed to create the composite key for prefix %s: %v", index, err)
+		}
+
+		err = ctx.GetStub().PutState(userLevelIndexKey, userdetailsbytes)
+		if err != nil {
+			return "", fmt.Errorf("error %v", err)
+		}
+	}
+
+	checkForCompositeKey, err = h.GetParticularMemberByLevel(ctx, oldLevelcopy, userId)
+
+	if err != nil {
+		return "", fmt.Errorf("error:%v", err.Error())
+	}
+
+	if checkForCompositeKey {
+
+		userLevelIndexKey, err := ctx.GetStub().CreateCompositeKey(index, []string{oldLevelcopy, userPrefix + userId})
+		if err != nil {
+			return "", fmt.Errorf("failed to create the composite key for prefix %s: %v", index, err)
+		}
+		err = ctx.GetStub().DelState(userLevelIndexKey)
+		if err != nil {
+			return "", fmt.Errorf("error in del state for %v level composite key", oldLevelcopy)
+		}
+	}
+
 	log.Printf("membership updated from %v to %v at %v tokens", membership.StartDate, membership.EndDate, membership.TokenDeposited)
 
-	return "", nil
+	adminidbytes, err := ctx.GetStub().GetState("owner")
 
+	if err != nil {
+		return "", fmt.Errorf("err: %v", err)
+	}
+
+	if adminidbytes == nil {
+		return "", fmt.Errorf("AdminID not set")
+	}
+
+	adminID := string(adminidbytes)
+
+	err = h.Transfer(ctx, adminID, tokens)
+
+	if err != nil {
+		return "", fmt.Errorf("err: %v", err)
+	}
+
+	return "Membership Updated", nil
+
+}
+
+func (h *HealthClub) GetParticularMemberByLevel(ctx contractapi.TransactionContextInterface, level string, userId string) (bool, error) {
+	var index string = "level~UserID"
+	var resultBool bool
+	//return bytes memory address of first state
+	levelIterator, err := ctx.GetStub().GetStateByPartialCompositeKey(index, []string{level})
+	if err != nil {
+		return false, fmt.Errorf("error:%v", err.Error())
+	}
+
+	defer levelIterator.Close()
+
+	// Iterate through result set and for each level found
+	var i int
+	for i = 0; levelIterator.HasNext(); i++ {
+		responseRange, err := levelIterator.Next()
+		if err != nil {
+			return false, fmt.Errorf("error:%v", err.Error())
+		}
+		// get the level and userID from defined index composite key
+		_, compositeKeyParts, err := ctx.GetStub().SplitCompositeKey(responseRange.Key)
+		if err != nil {
+			return false, fmt.Errorf("error:%v", err.Error())
+		}
+		returnedLevelUserID := compositeKeyParts[1]
+		if returnedLevelUserID == userPrefix+userId {
+			resultBool = true
+		} else {
+			resultBool = false
+		}
+	}
+	return resultBool, nil
+}
+
+func (h *HealthClub) GetAllMembershipsOfUsers(ctx contractapi.TransactionContextInterface) ([]Membership, error) {
+
+	membership := new(Membership)
+
+	arr := []Membership{}
+
+	resInBytes, err := ctx.GetStub().GetState("TotalMemberships")
+	breakingPoint, _ := strconv.Atoi(string(resInBytes))
+
+	if err != nil {
+		return nil, fmt.Errorf("error1:%v", err.Error())
+	}
+
+	for i := 0; i <= breakingPoint; i++ {
+
+		key := membershipPrefix + strconv.Itoa(i)
+		resInBytes, err = ctx.GetStub().GetState(key)
+
+		if err != nil {
+			return nil, fmt.Errorf("error:%v", err.Error())
+		}
+
+		if resInBytes == nil {
+
+		}
+
+		_ = json.Unmarshal(resInBytes, &membership)
+
+		arr = append(arr, *membership)
+
+	}
+	return arr[1:], nil
+}
+
+func (h *HealthClub) GetAllUsers(ctx contractapi.TransactionContextInterface) ([]User, error) {
+	startKey := ""
+	endKey := ""
+
+	resultsIterator, err := ctx.GetStub().GetStateByRange(startKey, endKey)
+	log.Print("resultsIterator", resultsIterator)
+
+	if err != nil {
+		return nil, err
+	}
+	defer resultsIterator.Close()
+
+	results := []User{}
+
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return nil, err
+		}
+		checkPrefix := strings.HasPrefix(queryResponse.Key, userPrefix)
+		if checkPrefix == true {
+			club := new(User)
+			_ = json.Unmarshal(queryResponse.Value, club)
+			results = append(results, *club)
+
+		}
+
+	}
+
+	return results, nil
+}
+
+func (h *HealthClub) UpdateMembershipLevelToken(ctx contractapi.TransactionContextInterface, level string, entryPrizeTokens int) (string, error) {
+
+	level_ := new(Level)
+
+	userId, err := ctx.GetClientIdentity().GetID()
+	if err != nil {
+		return "", fmt.Errorf("error:%v", err.Error())
+	}
+
+	adminidbytes, err := ctx.GetStub().GetState("owner")
+
+	if err != nil {
+		return "", fmt.Errorf("err: %v", err)
+	}
+
+	if adminidbytes == nil {
+		return "", fmt.Errorf("adminID not set")
+	}
+
+	adminID := string(adminidbytes)
+
+	if adminID != userId {
+		return "", fmt.Errorf("only owner can update level tokens")
+	}
+
+	resInBytes, err := ctx.GetStub().GetState(level)
+
+	if err != nil {
+		return "", fmt.Errorf("err: %v", err)
+	}
+
+	if resInBytes == nil {
+		return "", fmt.Errorf("levl is emplty")
+	}
+
+	_ = json.Unmarshal(resInBytes, level_)
+
+	if err != nil {
+		return "", fmt.Errorf("err: %v", err)
+	}
+
+	if level_.EntryPrizeTokens == entryPrizeTokens {
+		return "", fmt.Errorf("no unique value given")
+	}
+
+	if level == goldlevel || level == diamondlevel || level == platinumlevel {
+
+		level_.EntryPrizeTokens = entryPrizeTokens
+
+		resInBytes, err := json.Marshal(level_)
+		if err != nil {
+			return "", fmt.Errorf("error:%v", err)
+		}
+
+		err = ctx.GetStub().PutState(level, resInBytes)
+		if err != nil {
+			return "", fmt.Errorf("error:%v", err)
+		}
+
+		log.Printf("The %v level is updated at %v tokens ", level, entryPrizeTokens)
+
+	} else {
+		return "", fmt.Errorf("only Gold, Diamond, and Platinum levels are acceptable")
+	}
+
+	return "level is updated", nil
 }
